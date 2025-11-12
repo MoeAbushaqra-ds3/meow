@@ -8,8 +8,9 @@ from .logger import setup_logger
 
 logger = setup_logger(__name__)
 
-STICHING_DIR = os.path.join(os.path.dirname(os.path.abspath(__name__)), "stitching")
-BUILD_DIR = os.path.join(STICHING_DIR, "build")
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+STITCHING_DIR = os.path.join(PROJECT_ROOT, "stitching")
+BUILD_DIR = os.path.join(STITCHING_DIR, "build")
 
 
 class TaskStatus(str, Enum):
@@ -30,8 +31,17 @@ def call_image_stitching(
 ) -> Optional[str]:
     logger.info("Starting fast image stitching")
 
+    binary_path = os.path.join(BUILD_DIR, "image-stitching")
+    if not os.path.isfile(binary_path):
+        raise FileNotFoundError(
+            f"Stitching binary was not found at {binary_path}. Did you build it inside the container?"
+        )
+    if not os.access(binary_path, os.X_OK):
+        logger.info("Stitching binary not executable. Applying chmod +x.")
+        os.chmod(binary_path, 0o755)
+
     stitching_command = [
-        './image-stitching',
+        binary_path,
         output_dir,
         output_filename,
         str(fps),

@@ -19,6 +19,7 @@ services:
     volumes:
       - ./backend:/app
       - ./ml:/app/ml
+      - ./stitching:/app/stitching
 
   ml:
     build:
