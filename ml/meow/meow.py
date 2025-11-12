@@ -24,6 +24,7 @@ from .utils.meow_utils import determine_start_and_end_time, determine_start_and_
 import ffmpeg
 import cv2
 import logging
+import wave
 from .logger import setup_logger
 
 load_dotenv()
@@ -32,6 +33,61 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_FOLDER = os.path.join(os.path.dirname(os.path.dirname(CURRENT_DIR)), 'frontend/assets')
 
 logger = setup_logger(__name__)
+
+
+_MIN_SILENT_DURATION = 0.1  # seconds
+
+
+def _wav_is_empty(path: str) -> bool:
+    try:
+        with wave.open(path, "rb") as wav_file:
+            return wav_file.getnframes() == 0
+    except wave.Error:
+        return True
+
+
+def _generate_silent_audio(duration: float, output_path: str):
+    """Create silent mono wav track for fallback audio extraction."""
+    safe_duration = max(float(duration or 0), _MIN_SILENT_DURATION)
+    (
+        ffmpeg
+        .input("anullsrc=r=44100:cl=mono", f="lavfi", t=safe_duration)
+        .output(output_path, ac=1, ar=44100, format="wav")
+        .overwrite_output()
+        .run(quiet=True)
+    )
+    if _wav_is_empty(output_path):
+        logger.warning("Silent audio fallback produced empty wav %s. Regenerating with 1s duration.", output_path)
+        (
+            ffmpeg
+            .input("anullsrc=r=44100:cl=mono", f="lavfi", t=1.0)
+            .output(output_path, ac=1, ar=44100, format="wav")
+            .overwrite_output()
+            .run(quiet=True)
+        )
+
+
+def _extract_audio_track(video_path: str, temp_dir: str, label: str) -> str:
+    """
+    Extract mono wav audio from a video.
+    Falls back to generating silence when the source clip has no audio stream.
+    """
+    audio_path = create_temporary_file_name_with_extension(temp_dir, "wav")
+    try:
+        AudioFileClip(video_path).write_audiofile(audio_path, ffmpeg_params=["-ac", "1"])
+        if _wav_is_empty(audio_path):
+            raise ValueError("extracted audio was empty")
+        return audio_path
+    except Exception as exc:
+        logger.warning(
+            "Failed to extract %s audio from %s (%s). Generating silent track instead.",
+            label,
+            video_path,
+            exc,
+        )
+        duration = get_video_info(video_path)["duration"]
+        _generate_silent_audio(duration, audio_path)
+        return audio_path
 
 class TaskStatus(str, Enum):
     STARTED = 'started'
@@ -142,8 +198,7 @@ def run_with_args(left_videos: List[str], right_videos: List[str], output_name: 
 
             # Write audio as mono for synchronization
             logger.info("Extracting left audio")
-            left_audio_path = create_temporary_file_name_with_extension(temp_dir, 'wav')
-            AudioFileClip(left_video_path).write_audiofile(left_audio_path, ffmpeg_params=["-ac", "1"])
+            left_audio_path = _extract_audio_track(left_video_path, temp_dir, "left")
 
             if needs_fps_transform:
                 temp_path = transform_video_fps(left_video_path, output_fps, temp_dir=temp_dir, file_type=output_file_type)
@@ -155,8 +210,7 @@ def run_with_args(left_videos: List[str], right_videos: List[str], output_name: 
                 right_video_path = ffmpeg_concatenate_video_clips(right_videos_sorted, temp_dir=temp_dir, file_type=output_file_type)
 
             logger.info("Extracting right audio")
-            right_audio_path = create_temporary_file_name_with_extension(temp_dir, 'wav')
-            AudioFileClip(right_video_path).write_audiofile(right_audio_path, ffmpeg_params=["-ac", "1"])
+            right_audio_path = _extract_audio_track(right_video_path, temp_dir, "right")
             
             logger.debug(f"Extracted audio, files found from {left_audio_path} for left and {right_audio_path} for right")
 

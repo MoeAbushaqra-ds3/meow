@@ -4,18 +4,19 @@ from fastapi import FastAPI
 import uvicorn
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from routes import router
-from db import SessionLocal
+from .routes import router
+from .db import SessionLocal
 import logging
-from logging.config import dictConfig
+from logging.config import fileConfig
 
-logging.config.fileConfig('logging.conf', disable_existing_loggers=False)
+logging_config_path = os.path.join(os.path.dirname(__file__), "logging.conf")
+fileConfig(logging_config_path, disable_existing_loggers=False)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-API_URL = os.getenv("API_URL")
-PROJECT_NAME = os.getenv("PROJECT_NAME")
+API_URL = os.getenv("API_URL", "/api/v1")
+PROJECT_NAME = os.getenv("PROJECT_NAME", "Meow API")
 
 app = FastAPI(
     title=PROJECT_NAME, docs_url="/api/docs", openapi_url="/api", debug=True
@@ -58,4 +59,4 @@ app.include_router(
 )
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", reload=True, port=8888)
+    uvicorn.run("app.main:app", host="0.0.0.0", reload=True, port=8888)

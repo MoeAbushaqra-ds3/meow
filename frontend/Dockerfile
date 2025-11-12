@@ -1,10 +1,13 @@
-FROM node:12
+FROM node:18
 
-ADD package.json /package.json
+WORKDIR /app
 
-ENV NODE_PATH=/node_modules
-ENV PATH=$PATH:/node_modules/.bin
-RUN npm install
+COPY package.json package-lock.json ./
+
+ENV NODE_PATH=/app/node_modules
+ENV PATH=$PATH:/app/node_modules/.bin
+
+RUN npm ci
 
 COPY . .
 

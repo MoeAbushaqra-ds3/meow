@@ -75,6 +75,18 @@ def calculate_robust_audio_delay(file1_path, file2_path, comparison_length_sec: 
 
     # Ensure both arrays are the same length
     min_length = min(len(y1), len(y2))
+    if min_length == 0:
+        logger.warning(
+            "Cannot calculate audio delay because one of the signals is empty (%s samples vs %s samples). "
+            "Falling back to zero delay.",
+            len(y1),
+            len(y2),
+        )
+        return {
+            'delay_ms': 0.0,
+            'confidence': 0.0,
+            'delay_samples': 0
+        }
     y1 = y1[:min_length]
     y2 = y2[:min_length]
 
@@ -86,9 +98,15 @@ def calculate_robust_audio_delay(file1_path, file2_path, comparison_length_sec: 
     y1_filtered = butter_bandpass_filter(y1, lowcut=300, highcut=8000, samplerate=sr1)
     y2_filtered = butter_bandpass_filter(y2, lowcut=300, highcut=8000, samplerate=sr2)
 
-    # Normalize the signals
-    y1_normalized = y1_filtered / np.sqrt(np.sum(y1_filtered ** 2))
-    y2_normalized = y2_filtered / np.sqrt(np.sum(y2_filtered ** 2))
+    # Normalize the signals safely
+    def _normalize(signal: np.ndarray) -> np.ndarray:
+        energy = np.sqrt(np.sum(signal ** 2))
+        if energy == 0:
+            return np.zeros_like(signal)
+        return signal / energy
+
+    y1_normalized = _normalize(y1_filtered)
+    y2_normalized = _normalize(y2_filtered)
 
     # Compute cross-correlation
     correlation = correlate(y1_normalized, y2_normalized, mode='full')
@@ -147,9 +165,13 @@ def sync_and_mix_audio(file1_path, file2_path, output_path, mix_ratio=(0.5, 0.5)
     y2, sr = librosa.load(file2_path, mono=True)
 
     if len(y1) == 0:
-        raise ValueError(f"Left audio file is empty: {file1_path}")
+        logger.warning("Left audio file %s is empty after extraction. Using generated silence.", file1_path)
+        target_len = len(y2) if len(y2) > 0 else sr
+        y1 = np.zeros(max(target_len, sr // 10))
     if len(y2) == 0:
-        raise ValueError(f"Right audio file is empty: {file2_path}")
+        logger.warning("Right audio file %s is empty after extraction. Using generated silence.", file2_path)
+        target_len = len(y1) if len(y1) > 0 else sr
+        y2 = np.zeros(max(target_len, sr // 10))
 
     if delay is None:
         result = calculate_robust_audio_delay(file1_path, file2_path)

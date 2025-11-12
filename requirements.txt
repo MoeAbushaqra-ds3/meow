@@ -18,6 +18,7 @@ cffi==1.15.1
 cfgv==3.4.0
 charset-normalizer==3.0.1
 click==8.1.7
+colorlog==6.8.2
 comm==0.1.2
 contourpy==1.0.7
 cycler==0.11.0
@@ -100,7 +101,7 @@ nvidia-cuda-nvrtc-cu11==11.7.99
 nvidia-cuda-runtime-cu11==11.7.99
 nvidia-cudnn-cu11==8.5.0.96
 oauthlib==3.2.2
-opencv-contrib-python @ file:///home/jakki/Downloads/opencv_contrib_python-4.9.0.80-cp37-abi3-linux_x86_64.whl
+opencv-contrib-python
 opencv-cuda==0.0.2
 packaging==23.0
 pandas==1.5.3

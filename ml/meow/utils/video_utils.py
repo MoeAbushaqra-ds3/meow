@@ -205,11 +205,19 @@ def ffmpeg_extract_subclip(filename: str, t1: float, t2: float, target_name: str
         T1, T2 = [int(1000 * t) for t in [t1, t2]]
         target_name = "%sSUB%d_%d.%s" % (name, T1, T2, ext)
 
-    cmd = [get_setting("FFMPEG_BINARY"), "-y",
-           "-ss", "%0.2f" % t1,
-           "-i", filename,
-           "-t", "%0.2f" % (t2 - t1),
-           "-vcodec", "copy", "-acodec", "copy", target_name]
+    cmd = [
+        get_setting("FFMPEG_BINARY"),
+        "-y",
+        "-ss", "%0.2f" % t1,
+        "-i", filename,
+        "-t", "%0.2f" % (t2 - t1),
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "18",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
+        target_name
+    ]
 
     subprocess_call(cmd)
 

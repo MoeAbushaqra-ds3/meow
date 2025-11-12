@@ -1,5 +1,5 @@
 
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 4.2)
 add_definitions(-std=c++11)
 project(image-stitching)
 set(cmake_c_flags_debug "-g -Wall")

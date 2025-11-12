@@ -4,7 +4,7 @@ import os
 from typing import Annotated, Callable
 import json
 import uuid
-from connection_manager import socket_connections
+from .connection_manager import socket_connections
 from enum import Enum
 from time import sleep
 import logging

@@ -112,6 +112,14 @@ def butter_bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, samp
     low = lowcut / nyq
     high = highcut / nyq
     b, a = signal.butter(order, [low, high], btype='band')
+    padlen = 3 * (max(len(a), len(b)) - 1)
+    if len(data) <= padlen:
+        logger.warning(
+            "Skipping bandpass filter because signal length (%s) <= padlen (%s). Returning original data.",
+            len(data),
+            padlen,
+        )
+        return data
     y = signal.filtfilt(b, a, data)
     return y
 
