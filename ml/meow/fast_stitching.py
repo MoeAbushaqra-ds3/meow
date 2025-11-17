@@ -32,10 +32,8 @@ def call_image_stitching(
     logger.info("Starting fast image stitching")
 
     binary_path = os.path.join(BUILD_DIR, "image-stitching")
-    if not os.path.isfile(binary_path):
-        raise FileNotFoundError(
-            f"Stitching binary was not found at {binary_path}. Did you build it inside the container?"
-        )
+    if not os.path.exists(binary_path):
+        raise FileNotFoundError(f"Stitching binary was not found at {binary_path}. Did you build it inside the container?")
     if not os.access(binary_path, os.X_OK):
         logger.info("Stitching binary not executable. Applying chmod +x.")
         os.chmod(binary_path, 0o755)

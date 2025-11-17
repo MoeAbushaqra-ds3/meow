@@ -1,15 +1,10 @@
-cmake_minimum_required(VERSION 3.16)
+
+cmake_minimum_required(VERSION 4.2)
+add_definitions(-std=c++11)
 project(image-stitching)
+set(cmake_c_flags_debug "-g -Wall")
 
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_FLAGS_DEBUG "-g -Wall")
-
-if(DEFINED ENV{OpenCV_DIR})
-    # Allow callers to override the OpenCV install directory via env var.
-    set(OpenCV_DIR $ENV{OpenCV_DIR})
-endif()
-
+SET(OpenCV_DIR /usr/local/opencv-4.4/share/OpenCV)
 find_package(OpenCV 4 REQUIRED)
 
 include_directories(
