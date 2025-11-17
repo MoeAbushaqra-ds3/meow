@@ -12,7 +12,7 @@ from moviepy.audio.io.AudioFileClip import AudioFileClip
 from .fast_stitching import call_image_stitching
 from .clip_sorter import calculate_video_file_linking
 from .video_synchronizer import synchronize_videos
-from .utils.video_utils import ffmpeg_concatenate_video_clips, get_video_info, cut_clips_with_ffmpeg, merge_video_and_audio, transform_video_fps
+from .utils.video_utils import ffmpeg_concatenate_video_clips, get_video_info, cut_clips_with_ffmpeg, merge_video_and_audio, transform_video_fps, ensure_h264_video
 from .utils.file_utils import create_temporary_file_name_with_extension
 from .audio_synchronizer import sync_and_mix_audio
 from .utils.audio_utils import cut_audio_clip
@@ -305,37 +305,55 @@ def run_with_args(left_videos: List[str], right_videos: List[str], output_name: 
                 progress_callback("Cutting videos", TaskStatus.FINISHED, 30)
                 progress_callback("Editing videos", TaskStatus.STARTED, 30)
 
-            if use_mixer:
+            def process_with_optical_flow_mixer():
                 if progress_callback:
                     progress_callback("Mixing videos using optical flow", TaskStatus.STARTED, 30)
                 left_stream = cv2.VideoCapture(preprocessed_video_left_path)
                 right_stream = cv2.VideoCapture(preprocessed_video_right_path)
 
                 optical_flow_mixer = AbsoluteDifferenceOpticalFlowMixer()
-                processed_video_path = create_temporary_file_name_with_extension(temp_dir, output_file_type)
+                intermediate_video_path = create_temporary_file_name_with_extension(temp_dir, output_file_type)
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 
                 logger.info("Starting mixing")
-                optical_flow_mixer.mix_video_with_field_mask(
-                    video_capture_left=left_stream,
-                    video_capture_right=right_stream,
-                    video_output_path=processed_video_path,
-                    input_fps=input_fps,
-                    output_fps=output_fps,
-                    progress_callback=lambda p: progress_callback("Mixing videos", TaskStatus.STARTED,
-                                                                  int(30 + 50 * (p / 100))) if progress_callback else None
-                )
+                try:
+                    optical_flow_mixer.mix_video_with_field_mask(
+                        video_capture_left=left_stream,
+                        video_capture_right=right_stream,
+                        video_output_path=intermediate_video_path,
+                        input_fps=input_fps,
+                        output_fps=output_fps,
+                        fourcc=fourcc,
+                        progress_callback=lambda p: progress_callback("Mixing videos", TaskStatus.STARTED,
+                                                                      int(30 + 50 * (p / 100))) if progress_callback else None
+                    )
+                finally:
+                    left_stream.release()
+                    right_stream.release()
+                return ensure_h264_video(intermediate_video_path, output_file_type, temp_dir=temp_dir, require_transcode=False)
+
+            if use_mixer:
+                processed_video_path = process_with_optical_flow_mixer()
             elif use_panorama_stitching:
                 if progress_callback:
                     progress_callback("Stitching panorama video", TaskStatus.STARTED, 30)
-                processed_video_path = call_image_stitching(
-                    output_dir=temp_dir,
-                    output_filename=f"stitching_result.{output_file_type}",
-                    fps=output_fps,
-                    left_file_path=preprocessed_video_left_path,
-                    right_file_path=preprocessed_video_right_path,
-                    progress_callback=lambda p: progress_callback("Stitching video", TaskStatus.STARTED,
-                                                                  int(30 + 50 * (p / 100))) if progress_callback else None
-                )
+                try:
+                    processed_video_path = call_image_stitching(
+                        output_dir=temp_dir,
+                        output_filename=f"stitching_result.{output_file_type}",
+                        fps=output_fps,
+                        left_file_path=preprocessed_video_left_path,
+                        right_file_path=preprocessed_video_right_path,
+                        progress_callback=lambda p: progress_callback("Stitching video", TaskStatus.STARTED,
+                                                                      int(30 + 50 * (p / 100))) if progress_callback else None
+                    )
+                    processed_video_path = ensure_h264_video(processed_video_path, output_file_type, temp_dir=temp_dir)
+                except Exception as stitching_exc:
+                    logger.exception("Fast panorama stitching failed, falling back to optical flow mixer",
+                                     exc_info=stitching_exc)
+                    if progress_callback:
+                        progress_callback("Stitching video", TaskStatus.FAILED, 30, error=str(stitching_exc))
+                    processed_video_path = process_with_optical_flow_mixer()
 
             if progress_callback:
                 progress_callback("Editing videos", TaskStatus.FINISHED, 80)
@@ -361,7 +379,8 @@ def run_with_args(left_videos: List[str], right_videos: List[str], output_name: 
                 preprocessed_audio_path,
                 final_video_path,
                 output_fps=output_fps,
-                overwrite=overwrite
+                overwrite=overwrite,
+                temp_dir=temp_dir
             )
 
             if progress_callback:

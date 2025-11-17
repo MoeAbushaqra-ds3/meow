@@ -1,6 +1,6 @@
 FROM python:3.9
 
-ENV OPENCV_VERSION=4.4.0 \
+ENV OPENCV_VERSION=4.10.0 \
     OPENCV_PREFIX=/opt/opencv
 
 WORKDIR /app
@@ -40,6 +40,7 @@ RUN curl -sSL https://github.com/opencv/opencv/archive/${OPENCV_VERSION}.tar.gz 
     tar -xzf /tmp/opencv.tar.gz -C /tmp && \
     tar -xzf /tmp/opencv_contrib.tar.gz -C /tmp && \
     cmake -S /tmp/opencv-${OPENCV_VERSION} -B /tmp/opencv-build \
+        -G Ninja \
         -D CMAKE_BUILD_TYPE=Release \
         -D CMAKE_INSTALL_PREFIX=${OPENCV_PREFIX} \
         -D OPENCV_EXTRA_MODULES_PATH=/tmp/opencv_contrib-${OPENCV_VERSION}/modules \
@@ -51,7 +52,7 @@ RUN curl -sSL https://github.com/opencv/opencv/archive/${OPENCV_VERSION}.tar.gz 
         -D BUILD_opencv_python2=OFF \
         -D BUILD_opencv_python3=OFF \
         -D BUILD_opencv_java=OFF && \
-    cmake --build /tmp/opencv-build --target install -j"$(nproc)" && \
+    cmake --build /tmp/opencv-build --target install && \
     echo "${OPENCV_PREFIX}/lib" > /etc/ld.so.conf.d/opencv.conf && \
     ldconfig && \
     rm -rf /tmp/opencv.tar.gz /tmp/opencv_contrib.tar.gz /tmp/opencv-${OPENCV_VERSION} /tmp/opencv_contrib-${OPENCV_VERSION} /tmp/opencv-build

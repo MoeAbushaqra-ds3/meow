@@ -16,6 +16,8 @@ from ..logger import setup_logger
 import subprocess
 
 import os
+import tempfile
+from pathlib import Path
 
 logger = setup_logger(__name__)
 
@@ -33,10 +35,32 @@ def get_video_info(video_path) -> Dict[str, Union[int, float, str]]:
     file_path = str(probe['format']['filename'])
     file_type = os.path.splitext(file_path)[1].lower().replace(".", "")
     video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
-    width = int(video_stream['width'])
-    height = int(video_stream['height'])
-    frame_rate = round(eval_expr(video_stream['avg_frame_rate']))
-    duration = float(probe['format']['duration'])
+    duration_str = probe['format'].get('duration')
+    duration = float(duration_str) if duration_str is not None else 0.0
+
+    if video_stream is None:
+        logger.warning("No video stream detected in %s, falling back to OpenCV metadata.", video_path)
+        capture = cv2.VideoCapture(video_path)
+        if not capture.isOpened():
+            raise ValueError(f"Unable to open video file {video_path} for metadata inspection")
+
+        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = capture.get(cv2.CAP_PROP_FPS)
+        frame_count = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        capture.release()
+
+        frame_rate = round(fps) if fps and fps > 0 else 0
+        if duration == 0.0 and fps and fps > 0:
+            duration = float(frame_count / fps)
+    else:
+        width = int(video_stream['width'])
+        height = int(video_stream['height'])
+        frame_rate = round(eval_expr(video_stream['avg_frame_rate']))
+
+    if frame_rate == 0:
+        logger.warning("Unable to determine FPS for %s, defaulting to 30 FPS.", video_path)
+        frame_rate = 30
 
     return {
         "file_path": file_path,
@@ -228,7 +252,37 @@ def extract_subclip(input_video_path, start_time, end_time) -> VideoFileClip:
     return subclip
 
 
-def merge_video_and_audio(video_path: str, audio_path: str, output_path: str, output_fps: int = None, overwrite: bool = False):
+def transcode_video(video_path: str, temp_dir: Optional[str] = None, output_path: Optional[str] = None,
+                    video_codec: str = 'libx264') -> str:
+    """Transcode a video to a standard container using libx264."""
+    base_dir = temp_dir or os.path.dirname(video_path) or tempfile.gettempdir()
+    os.makedirs(base_dir, exist_ok=True)
+
+    if output_path is None:
+        output_path = create_temporary_file_name_with_extension(base_dir, "mp4")
+    else:
+        os.makedirs(os.path.dirname(output_path) or base_dir, exist_ok=True)
+
+    logger.info("Transcoding video %s to %s (%s)", video_path, output_path, video_codec)
+    (
+        ffmpeg
+        .input(video_path)
+        .output(
+            output_path,
+            vcodec=video_codec,
+            pix_fmt='yuv420p',
+            preset='fast',
+            crf=20,
+            an=None,
+            movflags='+faststart'
+        )
+        .global_args('-nostdin')
+        .run(overwrite_output=True)
+    )
+    return output_path
+
+
+def merge_video_and_audio(video_path: str, audio_path: str, output_path: str, output_fps: int = None, overwrite: bool = False, temp_dir: Optional[str] = None):
     """Merge video and audio using FFMPEG stream copy or AAC as fallback.
     
     Args:
@@ -237,23 +291,92 @@ def merge_video_and_audio(video_path: str, audio_path: str, output_path: str, ou
         output_path: Path to output file
         output_fps: Output framerate (optional)
     """
-    input_video = ffmpeg.input(video_path)
-    input_audio = ffmpeg.input(audio_path)
+    duration = None
+    try:
+        video_info = get_video_info(video_path)
+        duration = video_info['duration']
+    except Exception as exc:
+        logger.warning("Unable to read metadata from %s, continuing merge without duration clamp: %s",
+                       video_path, exc)
 
-    # Get actual duration from the processed video
-    video_info = get_video_info(video_path)
-    duration = video_info['duration']
+    def _run_mux(src_video: str):
+        input_video = ffmpeg.input(src_video)
+        input_audio = ffmpeg.input(audio_path)
 
-    ffmpeg.output(
-        input_video.video,
-        input_audio.audio,
-        output_path,
-        vcodec='copy',
-        acodec='aac',
-        r=output_fps,
-        t=duration,  # Set the correct duration
-        shortest=None  # End when shortest input ends
-    ).global_args('-nostdin').run(overwrite_output=overwrite)
+        output_kwargs = {
+            "vcodec": "copy",
+            "acodec": "aac"
+        }
+        if output_fps:
+            output_kwargs["r"] = output_fps
+        if duration:
+            output_kwargs["t"] = duration
+
+        (
+            ffmpeg
+            .output(
+                input_video.video,
+                input_audio.audio,
+                output_path,
+                shortest=None,
+                **output_kwargs
+            )
+            .global_args('-nostdin')
+            .run(overwrite_output=overwrite)
+        )
+
+    try:
+        _run_mux(video_path)
+    except ffmpeg.Error as mux_error:
+        error_message = mux_error.stderr.decode('utf-8', errors='ignore') if mux_error.stderr else str(mux_error)
+        logger.warning("Direct video/audio mux failed: %s", error_message)
+        sanitized_path = None
+        try:
+            sanitized_path = transcode_video(video_path, temp_dir=temp_dir)
+            _run_mux(sanitized_path)
+        finally:
+            if sanitized_path and os.path.exists(sanitized_path):
+                try:
+                    os.remove(sanitized_path)
+                except OSError:
+                    logger.debug("Could not remove temporary sanitized video %s", sanitized_path)
+
+
+def ensure_h264_video(video_path: str, output_file_type: str, temp_dir: Optional[str] = None, require_transcode: bool = True) -> str:
+    """Ensure stitched output is a standard H.264 MP4/MOV to keep downstream ffmpeg happy."""
+    desired_ext = (output_file_type or "").lower()
+    if desired_ext not in ("mp4", "mov"):
+        return video_path
+
+    needs_transcode = False
+    codec_name = None
+    try:
+        probe = ffmpeg.probe(video_path)
+        video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
+        if video_stream is None:
+            needs_transcode = True
+        else:
+            codec_name = video_stream.get("codec_name", "").lower()
+            if codec_name not in {"h264", "hevc", "h265", "mp4v", "mpeg4"}:
+                needs_transcode = True
+    except ffmpeg.Error as exc:
+        logger.warning("ffprobe failed for %s: %s. Re-encoding.", video_path, exc)
+        needs_transcode = True
+
+    current_ext = Path(video_path).suffix.lower().replace(".", "")
+    if not needs_transcode and current_ext == desired_ext:
+        return video_path
+
+    if not needs_transcode and not require_transcode:
+        return video_path
+
+    base_dir = temp_dir or os.path.dirname(video_path) or tempfile.gettempdir()
+    os.makedirs(base_dir, exist_ok=True)
+    target_path = video_path if current_ext == desired_ext else create_temporary_file_name_with_extension(
+        base_dir,
+        desired_ext
+    )
+    return transcode_video(video_path, temp_dir=temp_dir, output_path=target_path)
 
 
 def get_available_hw_encoders() -> dict:

@@ -1,10 +1,9 @@
 
-cmake_minimum_required(VERSION 4.2)
+cmake_minimum_required(VERSION 3.16)
 add_definitions(-std=c++11)
 project(image-stitching)
 set(cmake_c_flags_debug "-g -Wall")
 
-SET(OpenCV_DIR /usr/local/opencv-4.4/share/OpenCV)
 find_package(OpenCV 4 REQUIRED)
 
 include_directories(

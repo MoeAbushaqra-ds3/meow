@@ -11,12 +11,49 @@ logger = setup_logger(__name__)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 STITCHING_DIR = os.path.join(PROJECT_ROOT, "stitching")
 BUILD_DIR = os.path.join(STITCHING_DIR, "build")
+INSTALLED_BINARY = "/usr/local/bin/image-stitching"
 
 
 class TaskStatus(str, Enum):
     STARTED = 'started'
     FINISHED = 'finished'
     FAILED = 'failed'
+
+
+def _resolve_stitching_binary() -> str:
+    binary_candidates = [
+        os.environ.get("STITCHING_BINARY"),
+        os.path.join(BUILD_DIR, "image-stitching"),
+        os.path.join(BUILD_DIR, "Release", "image-stitching"),
+        INSTALLED_BINARY,
+    ]
+
+    checked_paths = []
+    for candidate in binary_candidates:
+        if not candidate:
+            continue
+
+        candidate_variants = [candidate]
+        _, ext = os.path.splitext(candidate)
+        if ext.lower() != ".exe":
+            candidate_variants.append(f"{candidate}.exe")
+
+        for path in candidate_variants:
+            checked_paths.append(path)
+            if not os.path.exists(path):
+                continue
+            if not os.access(path, os.X_OK):
+                logger.info("Stitching binary not executable at %s. Applying chmod +x.", path)
+                try:
+                    os.chmod(path, 0o755)
+                except PermissionError:
+                    logger.warning("Unable to chmod stitching binary at %s", path)
+            if os.access(path, os.X_OK):
+                return path
+
+    raise FileNotFoundError(
+        "Stitching binary was not found or executable. Checked: " + ", ".join(checked_paths)
+    )
 
 
 def call_image_stitching(
@@ -31,12 +68,7 @@ def call_image_stitching(
 ) -> Optional[str]:
     logger.info("Starting fast image stitching")
 
-    binary_path = os.path.join(BUILD_DIR, "image-stitching")
-    if not os.path.exists(binary_path):
-        raise FileNotFoundError(f"Stitching binary was not found at {binary_path}. Did you build it inside the container?")
-    if not os.access(binary_path, os.X_OK):
-        logger.info("Stitching binary not executable. Applying chmod +x.")
-        os.chmod(binary_path, 0o755)
+    binary_path = _resolve_stitching_binary()
 
     stitching_command = [
         binary_path,
